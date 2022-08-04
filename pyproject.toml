@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2020 Diego Elio Pettenò
+#
+# SPDX-License-Identifier: Unlicense
+
+[tool.black]
+target-version = ['py35']
+
+[tool.pylint.messages_control]
+disable = ['too-many-arguments']
