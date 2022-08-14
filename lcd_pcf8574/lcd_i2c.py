@@ -11,6 +11,8 @@ from struct import pack, unpack
 from busio import I2C
 from adafruit_bus_device.i2c_device import I2CDevice
 
+from .command import HD44780Instruction
+
 
 DEFAULT_COLUMNS = 16
 DEFAULT_ROWS = 2
@@ -18,33 +20,6 @@ DEFAULT_ADDR = 0x27
 
 MILLISECOND = 1e-3
 MICROSECOND = 1e-6
-
-# Instruction set
-FUNCTIONSET = 0x20
-MODE_4BIT = 0x00
-MODE_2LINE = 0x08
-MODE_5X8DOT = 0x00
-
-RETURN_HOME = 0x02
-DISPLAY_CLEAR = 0x01
-
-DISPLAY_SET = 0x08
-DISPLAY_ON = 0x04
-DISPLAY_OFF = 0x00
-CURSOR_ON = 0x02
-CURSOR_OFF = 0x00
-BLINK_ON = 0x01
-BLINK_OFF = 0x00
-
-ENTRY_MODE_SET = 0x04
-CURSOR_INCREMENT = 0x02
-CURSOR_DECREMENT = 0x00
-
-CURSOR_SET = 0x10
-CURSOR_RIGHT = 0x04
-CURSOR_LEFT = 0x00
-DISPLAY_SHIFT = 0x01
-CURSOR_MOVE = 0x00
 
 FLAG_BACKLIGHT_ON = 0x08
 FLAG_BACKLIGHT_OFF = 0x00
@@ -54,8 +29,6 @@ FLAG_WRITE_ENABLE = 0x00
 FLAG_REGISTER_DATA = 0x01
 FLAG_REGISTER_INSTRUCTION = 0x00
 FLAG_LCD_BUSY = 0b10000000
-
-CURSOR_POS_SET = 0b10000000
 
 ADDR_COL_INCREMENT = 0x01
 ADDR_ROW_INCREMENT = 0x40
@@ -84,13 +57,14 @@ class LCD:
         i2c = I2C(sda=sda, scl=scl, frequency=100000)
 
         self.i2c = I2CDevice(i2c, address)
+
         self._backlight = FLAG_BACKLIGHT_OFF
         self._write_enable = FLAG_WRITE_ENABLE
         self._register = FLAG_REGISTER_INSTRUCTION
 
-        self._cursor = CURSOR_ON
-        self._blink = BLINK_OFF
-        self._display_state = DISPLAY_ON
+        self._cursor_on = True
+        self._blink_on = False
+        self._display_on = True
 
         self._rows = rows
         self._columns = columns
@@ -100,7 +74,9 @@ class LCD:
         # Wait for power-on
         sleep(20 * MILLISECOND)
 
-        mode_4bit = FUNCTIONSET | MODE_4BIT
+        # Set 4-bit mode. The display defaults to 8-bit mode on power-up,
+        # so this is the only instruction sent in 8-bot mode.
+        mode_4bit = HD44780Instruction.function_set(bits=4, lines=2, font="5x8")
         modeset_high = pack(">B", mode_4bit | FLAG_DATA_ENABLE)
         modeset_low = pack(">B", mode_4bit & ~FLAG_DATA_ENABLE)
         with self.i2c:
@@ -111,11 +87,11 @@ class LCD:
             self.i2c.write(modeset_low)
             sleep(MILLISECOND)
 
-        self._send(mode_4bit | MODE_2LINE | MODE_5X8DOT)
         self.clear()
-
         self._configure_display()
-        self._send(ENTRY_MODE_SET | CURSOR_INCREMENT)
+
+        entry_mode = HD44780Instruction.entry_mode_set(address="increment", shift=False)
+        self._send(entry_mode)
 
         self.backlight(True)
 
@@ -125,7 +101,8 @@ class LCD:
         """
         self._write_enable = FLAG_WRITE_ENABLE
         self._register = FLAG_REGISTER_INSTRUCTION
-        self._send(DISPLAY_CLEAR)
+        clear_display = HD44780Instruction.clear_display()
+        self._send(clear_display)
 
     def backlight(self, backlight: bool):
         """
@@ -140,14 +117,14 @@ class LCD:
         """
         :param cursor: Whether the cursor should be enabled
         """
-        self._cursor = CURSOR_ON if cursor else CURSOR_OFF
+        self._cursor_on = cursor
         self._configure_display()
 
     def blink(self, blink: bool):
         """
         :param blink: Whether cursor blink should be enabled
         """
-        self._blink = BLINK_ON if blink else BLINK_OFF
+        self._blink_on = blink
         self._configure_display()
 
     def home(self):
@@ -158,7 +135,9 @@ class LCD:
         self._register = FLAG_REGISTER_INSTRUCTION
         self._current_row = 0
         self._current_column = 0
-        self._send(RETURN_HOME)
+
+        return_home = HD44780Instruction.return_home()
+        self._send(return_home)
 
     def set_position(self, row: int, col: int):
         """
@@ -177,7 +156,8 @@ class LCD:
             self._current_row * ADDR_ROW_INCREMENT
             + self._current_column * ADDR_COL_INCREMENT
         )
-        self._send(CURSOR_POS_SET | cursor_addr)
+        ddram_addr_set = HD44780Instruction.ddram_address_set(cursor_addr)
+        self._send(ddram_addr_set)
 
         self._write_enable = prev_write_enable
         self._register = prev_register
@@ -219,7 +199,10 @@ class LCD:
         """
         self._write_enable = FLAG_WRITE_ENABLE
         self._register = FLAG_REGISTER_INSTRUCTION
-        self._send(DISPLAY_SET | self._display_state | self._cursor | self._blink)
+        display_ctrl = HD44780Instruction.display_control(
+            self._display_on, self._cursor_on, self._blink_on
+        )
+        self._send(display_ctrl)
 
     def _wait_for_ready(self):
         """
@@ -232,9 +215,10 @@ class LCD:
         self._write_enable = FLAG_READ_ENABLE
         self._register = FLAG_REGISTER_INSTRUCTION
 
+        read_busy_flag = HD44780Instruction.read_busy_flag()
         is_busy = True
         while is_busy:
-            response_byte = self._send_byte(0)
+            response_byte = self._send_byte(read_busy_flag)
             is_busy = response_byte & FLAG_LCD_BUSY > 0
 
         self._write_enable = prev_write_enable
