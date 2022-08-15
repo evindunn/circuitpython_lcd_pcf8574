@@ -5,10 +5,13 @@
 Instructions for the HD44780 LCD driver
 """
 
-from enum import Enum
-from typing import Literal
+try:
+    from typing import Literal
+except ImportError:
+    pass
 
 
+# pylint: disable=too-few-public-methods
 class HD44780Instruction:
     """
     Class holding constant data and utility functions for the HD44780 LCD
@@ -17,7 +20,7 @@ class HD44780Instruction:
     See page 24 of the datasheet: https://www.sparkfun.com/datasheets/LCD/HD44780.pdf
     """
 
-    class Type(Enum):
+    class Type:
         """
         Enum representing the type of instruction for the HD44780
         """
@@ -32,7 +35,7 @@ class HD44780Instruction:
         DDRAM_ADDR_SET = 0b10000000
         BUSY_FLAG_READ = 0b00000000
 
-    class ArgsEntryModeSet(Enum):
+    class ArgsEntryModeSet:
         """
         Arguments for the ENTRY_MODE_SET instruction
         """
@@ -40,7 +43,7 @@ class HD44780Instruction:
         INCREMENT_ADDRESS = 0b00000010
         SHIFT_DISPLAY = 0b00000001
 
-    class ArgsDisplayControl(Enum):
+    class ArgsDisplayControl:
         """
         Arguments for the DISPLAY_CONTROL instruction
         """
@@ -49,7 +52,7 @@ class HD44780Instruction:
         CURSOR_ON = 0b00000010
         BLINK_ON = 0b00000001
 
-    class ArgsCursorControl(Enum):
+    class ArgsCursorControl:
         """
         Arguments for the CURSOR_DISPLAY_SHIFT instruction
         """
@@ -57,7 +60,7 @@ class HD44780Instruction:
         SHIFT_DISPLAY = 0b00001000
         SHIFT_RIGHT = 0b00000100
 
-    class ArgsFunctionSet(Enum):
+    class ArgsFunctionSet:
         """
         Arguments for the FUNCTION_SET instruction
         """
@@ -71,14 +74,14 @@ class HD44780Instruction:
         """
         Returns the op code for clearing the LCD
         """
-        return HD44780Instruction.Type.DISPLAY_CLEAR.value
+        return HD44780Instruction.Type.DISPLAY_CLEAR
 
     @staticmethod
     def return_home() -> int:
         """
         Returns the op code for returning to row 0, column 0 of the LCD
         """
-        return HD44780Instruction.Type.RETURN_HOME.value
+        return HD44780Instruction.Type.RETURN_HOME
 
     @staticmethod
     def entry_mode_set(address: Literal["increment", "decrement"], shift: bool) -> int:
@@ -90,11 +93,11 @@ class HD44780Instruction:
         :return: The op code for setting the LCD's entry mode with the given
             arguments
         """
-        val = HD44780Instruction.Type.ENTRY_MODE_SET.value
+        val = HD44780Instruction.Type.ENTRY_MODE_SET
         if address == "increment":
-            val |= HD44780Instruction.ArgsEntryModeSet.INCREMENT_ADDRESS.value
+            val |= HD44780Instruction.ArgsEntryModeSet.INCREMENT_ADDRESS
         if shift:
-            val |= HD44780Instruction.ArgsEntryModeSet.SHIFT_DISPLAY.value
+            val |= HD44780Instruction.ArgsEntryModeSet.SHIFT_DISPLAY
         return val
 
     @staticmethod
@@ -107,13 +110,13 @@ class HD44780Instruction:
         :return: The op code for setting the LCD's display settings with the
             given arguments
         """
-        val = HD44780Instruction.Type.DISPLAY_CONTROL.value
+        val = HD44780Instruction.Type.DISPLAY_CONTROL
         if display_on:
-            val |= HD44780Instruction.ArgsDisplayControl.DISPLAY_ON.value
+            val |= HD44780Instruction.ArgsDisplayControl.DISPLAY_ON
         if cursor_on:
-            val |= HD44780Instruction.ArgsDisplayControl.CURSOR_ON.value
+            val |= HD44780Instruction.ArgsDisplayControl.CURSOR_ON
         if blink_on:
-            val |= HD44780Instruction.ArgsDisplayControl.BLINK_ON.value
+            val |= HD44780Instruction.ArgsDisplayControl.BLINK_ON
         return val
 
     @staticmethod
@@ -127,11 +130,11 @@ class HD44780Instruction:
         :return: The op code for controlling the LCD's cursor with the given
             arguments
         """
-        val = HD44780Instruction.Type.CURSOR_DISPLAY_SHIFT.value
+        val = HD44780Instruction.Type.CURSOR_DISPLAY_SHIFT
         if shift == "display":
-            val |= HD44780Instruction.ArgsCursorControl.SHIFT_DISPLAY.value
+            val |= HD44780Instruction.ArgsCursorControl.SHIFT_DISPLAY
         if direction == "right":
-            val |= HD44780Instruction.ArgsCursorControl.SHIFT_RIGHT.value
+            val |= HD44780Instruction.ArgsCursorControl.SHIFT_RIGHT
         return val
 
     @staticmethod
@@ -144,13 +147,13 @@ class HD44780Instruction:
         :param font: Whether to use the 5x10 or 5x10 font
         :return: The op code for configuring the LCD with the given arguments
         """
-        val = HD44780Instruction.Type.CURSOR_DISPLAY_SHIFT.value
+        val = HD44780Instruction.Type.CURSOR_DISPLAY_SHIFT
         if bits == 8:
-            val |= HD44780Instruction.ArgsFunctionSet.DATA_LENGTH_8_BIT.value
+            val |= HD44780Instruction.ArgsFunctionSet.DATA_LENGTH_8_BIT
         if lines == 2:
-            val |= HD44780Instruction.ArgsFunctionSet.MODE_2_LINE.value
+            val |= HD44780Instruction.ArgsFunctionSet.MODE_2_LINE
         if font == "5x10":
-            val |= HD44780Instruction.ArgsFunctionSet.FONT_5X10.value
+            val |= HD44780Instruction.ArgsFunctionSet.FONT_5X10
         return val
 
     @staticmethod
@@ -160,7 +163,7 @@ class HD44780Instruction:
         :return: The op code for setting the cgram address to the given
             value
         """
-        return HD44780Instruction.Type.CGRAM_ADDR_SET.value | address
+        return HD44780Instruction.Type.CGRAM_ADDR_SET | address
 
     @staticmethod
     def ddram_address_set(address: int) -> int:
@@ -169,11 +172,11 @@ class HD44780Instruction:
         :return: The op code for setting the cgram address to the given
             value
         """
-        return HD44780Instruction.Type.DDRAM_ADDR_SET.value | address
+        return HD44780Instruction.Type.DDRAM_ADDR_SET | address
 
     @staticmethod
     def read_busy_flag() -> int:
         """
         :return: The op code for reading the busy flag of the LCD
         """
-        return HD44780Instruction.Type.BUSY_FLAG_READ.value
+        return HD44780Instruction.Type.BUSY_FLAG_READ
