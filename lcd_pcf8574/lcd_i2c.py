@@ -103,6 +103,8 @@ class LCD:
         self._register = FLAG_REGISTER_INSTRUCTION
         clear_display = HD44780Instruction.clear_display()
         self._send(clear_display)
+        self._current_row = 0
+        self._current_column = 0
 
     def backlight(self, backlight: bool):
         """
