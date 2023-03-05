@@ -147,7 +147,7 @@ class HD44780Instruction:
         :param font: Whether to use the 5x10 or 5x10 font
         :return: The op code for configuring the LCD with the given arguments
         """
-        val = HD44780Instruction.Type.CURSOR_DISPLAY_SHIFT
+        val = HD44780Instruction.Type.FUNCTION_SET
         if bits == 8:
             val |= HD44780Instruction.ArgsFunctionSet.DATA_LENGTH_8_BIT
         if lines == 2:

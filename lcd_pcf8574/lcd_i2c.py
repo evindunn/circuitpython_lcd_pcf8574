@@ -9,7 +9,7 @@ from time import sleep
 from struct import pack, unpack
 
 from busio import I2C
-from adafruit_bus_device.i2c_device import I2CDevice
+from adafruit_pcf8574 import PCF8574
 
 from .command import HD44780Instruction
 
@@ -21,13 +21,13 @@ DEFAULT_ADDR = 0x27
 MILLISECOND = 1e-3
 MICROSECOND = 1e-6
 
-FLAG_BACKLIGHT_ON = 0x08
-FLAG_BACKLIGHT_OFF = 0x00
-FLAG_DATA_ENABLE = 0x04
-FLAG_READ_ENABLE = 0x02
-FLAG_WRITE_ENABLE = 0x00
-FLAG_REGISTER_DATA = 0x01
-FLAG_REGISTER_INSTRUCTION = 0x00
+FLAG_BACKLIGHT_ON = 0b1000
+FLAG_BACKLIGHT_OFF = 0b0000
+FLAG_DATA_ENABLE = 0b0100
+FLAG_READ_ENABLE = 0b0010
+FLAG_WRITE_ENABLE = 0b0000
+FLAG_REGISTER_DATA = 0b0001
+FLAG_REGISTER_INSTRUCTION = 0b0000
 FLAG_LCD_BUSY = 0b10000000
 
 ADDR_COL_INCREMENT = 0x01
@@ -55,8 +55,7 @@ class LCD:
 
         # Max frequency for the PCF8574 is 100 kHz
         i2c = I2C(sda=sda, scl=scl, frequency=100000)
-
-        self.i2c = I2CDevice(i2c, address)
+        self.pcf = PCF8574(i2c, address=address)
 
         self._backlight = FLAG_BACKLIGHT_OFF
         self._write_enable = FLAG_WRITE_ENABLE
@@ -64,7 +63,7 @@ class LCD:
 
         self._cursor_on = True
         self._blink_on = False
-        self._display_on = True
+        self._display_on = False
 
         self._rows = rows
         self._columns = columns
@@ -72,27 +71,50 @@ class LCD:
         self._current_column = 0
 
         # Wait for power-on
-        sleep(20 * MILLISECOND)
+        sleep(50 * MILLISECOND)
 
-        # Set 4-bit mode. The display defaults to 8-bit mode on power-up,
-        # so this is the only instruction sent in 8-bot mode.
-        mode_4bit = HD44780Instruction.function_set(bits=4, lines=2, font="5x8")
-        modeset_high = pack(">B", mode_4bit | FLAG_DATA_ENABLE)
-        modeset_low = pack(">B", mode_4bit & ~FLAG_DATA_ENABLE)
-        with self.i2c:
-            self.i2c.write(modeset_low)
-            sleep(MILLISECOND)
-            self.i2c.write(modeset_high)
-            sleep(MILLISECOND)
-            self.i2c.write(modeset_low)
-            sleep(MILLISECOND)
+        ### Initialization sequence, page 42 of HD44780 datasheet
+        val = (
+            HD44780Instruction.Type.FUNCTION_SET | 
+            HD44780Instruction.ArgsFunctionSet.DATA_LENGTH_8_BIT
+        )
 
-        self.clear()
+        # Set 8-bit mode
+        for _ in range(3):
+            self.pcf.write_gpio(val)
+            self._pulse_enable(val)
+            sleep(5 * MILLISECOND)
+
+        # Set 4-bit mode
+        val = HD44780Instruction.Type.FUNCTION_SET
+        self.pcf.write_gpio(val)
+        self._pulse_enable(val)
+        sleep(5 * MILLISECOND)
+        
+        # Set lines, font
+        mode_4bit = HD44780Instruction.function_set(
+            bits=4,
+            lines=2,
+            font="5x8"
+        )
+        self._send(mode_4bit)
+
+        # Set display vars & clear
         self._configure_display()
+        self.clear()
 
-        entry_mode = HD44780Instruction.entry_mode_set(address="increment", shift=False)
+        # Entry mode set
+        entry_mode = HD44780Instruction.entry_mode_set(
+            address="increment", 
+            shift=False
+        )
         self._send(entry_mode)
 
+        ### End initialization sequence
+        sleep(MILLISECOND)
+
+        self._display_on = True
+        self._configure_display()
         self.backlight(True)
 
     def clear(self):
@@ -206,6 +228,19 @@ class LCD:
         )
         self._send(display_ctrl)
 
+    def _check_busy(self) -> bool:
+        """
+        Check the LCD busy flag
+        """
+        prev_write_enable = self._write_enable
+        self._write_enable = FLAG_READ_ENABLE
+
+        read_busy_flag = HD44780Instruction.read_busy_flag()
+        response = self._send_byte(read_busy_flag)
+
+        self._write_enable = prev_write_enable
+        return (response & FLAG_LCD_BUSY) > 0
+
     def _wait_for_ready(self):
         """
         Poll the LCD until the ready flag is not set and the LCD is ready to
@@ -217,22 +252,42 @@ class LCD:
         self._write_enable = FLAG_READ_ENABLE
         self._register = FLAG_REGISTER_INSTRUCTION
 
-        read_busy_flag = HD44780Instruction.read_busy_flag()
-        is_busy = True
-        while is_busy:
-            response_byte = self._send_byte(read_busy_flag)
-            is_busy = response_byte & FLAG_LCD_BUSY > 0
+        while self._check_busy():
+            sleep(MILLISECOND)
 
         self._write_enable = prev_write_enable
         self._register = prev_register
 
     def _send(self, byte: int):
         """
-        Wait for the LCD to be ready, then send the given byte
+        Send the given byte to the LCD, then poll the busy flag until the LCD
+        is ready again
         :param byte: The 0-255 int to send to the LCD
         """
-        self._wait_for_ready()
         self._send_byte(byte)
+        self._wait_for_ready()
+
+    def _pulse_enable(self, byte: int) -> int:
+        """
+        Pulse the enable bit with the given byte value
+        :param byte: The data to send
+        """
+        byte_low = byte & ~FLAG_DATA_ENABLE
+        byte_high = byte | FLAG_DATA_ENABLE
+
+        # enable pulse must be >450ns
+        self.pcf.write_gpio(byte_high)
+        sleep(2 * MICROSECOND)
+
+        # sample response during pulse
+        response = self.pcf.read_gpio()
+
+        # commands need >37us to settle
+        self.pcf.write_gpio(byte_low)
+        sleep(75 * MICROSECOND)
+
+        return response
+        
 
     def _send_byte(self, byte: int):
         """
@@ -259,24 +314,12 @@ class LCD:
         val_nib_high = byte & 0b11110000
         val_nib_low = (byte & 0b00001111) << 4
 
-        response_buf = bytearray(2)
+        response_buf = 0
 
-        with self.i2c:
-            for idx, nib in enumerate([val_nib_high, val_nib_low]):
-                val = nib | self._lsb
-                req_write_high = pack(">B", val | FLAG_DATA_ENABLE)
-                req_write_low = pack(">B", val & ~FLAG_DATA_ENABLE)
+        for idx, nib in enumerate([val_nib_high, val_nib_low]):
+            val = nib | self._lsb
+            self.pcf.write_gpio(val)
+            response_nib = self._pulse_enable(val) & 0b11110000
+            response_buf |= response_nib >> (4 * idx)
 
-                self.i2c.write(req_write_low)
-
-                self.i2c.write(req_write_high)
-                self.i2c.readinto(response_buf, start=idx)
-
-                self.i2c.write(req_write_low)
-
-        response = unpack(">BB", response_buf)
-        response_nib_high = response[0] & 0b11110000
-        response_nib_low = (response[1] & 0b11110000) >> 4
-        response_byte = response_nib_high + response_nib_low
-
-        return response_byte
+        return response_buf
